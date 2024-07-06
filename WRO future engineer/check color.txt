@@ -1,0 +1,65 @@
+from picamera.array import PiRGBArray 
+from picamera import PiCamera
+import numpy as np
+import time 
+import cv2
+import RPi.GPIO as GPIO
+from time import sleep
+
+# Instantiate and configure picamera 
+camera = PiCamera()
+camera.resolution = (320, 240)
+camera.awb_mode = 'off'
+camera.awb_gains = (2, 1)
+camera.framerate = 32
+raw_capture = PiRGBArray(camera, size=(320, 240))
+
+# Define HSV ranges and corresponding color names
+HSV_value_color = [
+    ((35, 100, 50), (85, 255, 255), 'G'),   # Green
+    ((0, 100, 100), (10, 255, 255), 'R'),  # Red (lower range)
+    ((170, 100, 100), (180, 255, 255), 'R')  # Red (upper range)
+]
+
+# Initialize GPIO if needed
+# GPIO.setup(...)
+
+# Capture continuous frames to process
+for frame in camera.capture_continuous(raw_capture, format="bgr", use_video_port=True):
+    image = frame.array
+    image = cv2.rotate(image, cv2.ROTATE_180)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    
+    color_found = False  # Flag to track if any color is found
+    
+    for (lower, upper, color_name) in HSV_value_color:
+        mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if 300 < area < 2000:  # Adjust area thresholds as per your requirement
+                x, y, w, h = cv2.boundingRect(contour)
+                cv2.rectangle(image, (x, y), (x + w, y + h), (167, 49, 195), 2)
+                cv2.putText(image, color_name + str(area), (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (195, 86, 114), 1)
+                if color_name == "G" or color_name == "R":
+                    print(color_name)
+                    sleep(0.05)
+                color_found = True
+    
+    if not color_found:
+        print("no color found")
+    
+    cv2.imshow("image", image)
+    
+    key = cv2.waitKey(1) & 0xFF
+    raw_capture.truncate(0)
+    
+    if key == ord('q'):
+        # Perform cleanup
+        GPIO.output(in1, GPIO.LOW)
+        GPIO.output(in2, GPIO.LOW)
+        cv2.destroyAllWindows()
+        break
+
+
