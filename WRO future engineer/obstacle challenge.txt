@@ -1,0 +1,323 @@
+import numpy as np
+import cv2
+import board
+import time
+import busio
+import adafruit_ads1x15.ads1115 as ADS
+from time import sleep
+from picamera2 import Picamera2
+import libcamera
+from adafruit_ads1x15.analog_in import AnalogIn
+from gpiozero import PWMOutputDevice, OutputDevice
+
+# Initialize I2C connection
+i2c = busio.I2C(board.SCL, board.SDA)
+
+# Create BNO055 object
+sensor = adafruit_bno055.BNO055_I2C(i2c)
+
+# Initialize the initial yaw
+initial_yaw = None
+
+# Pin definitions
+in1 = 19
+in2 = 16
+en = 13
+en2 = 20
+in3 = 21
+in4 = 26
+
+sensor1 = DistanceSensor(echo=22, trigger=27)
+sensor2 = DistanceSensor(echo=9, trigger=12)
+sensor3 = DistanceSensor(echo=18, trigger=23)   # Right sensor
+
+
+turnLeft = 0
+turnRight = 0
+minArea = 100
+controldirection = 0
+direction = 0
+corner = 0
+distanceAngle = 5
+trackingAngle = 0
+
+# Motor setup
+motor_pwm = PWMOutputDevice(en, frequency=1000, initial_value=0.5)
+
+# GPIO setup
+motor_in1 = OutputDevice(in1)
+motor_in2 = OutputDevice(in2)
+turn_motor = OutputDevice(en2)
+right_motor = OutputDevice(in4)
+left_motor = OutputDevice(in3)
+
+def move_backward(duration):
+    motor_in1.on()
+    motor_in2.off()
+    sleep(duration)  # Allow the motor to run for the specified duration
+    stop()
+
+def move_forward(duration):
+    motor_in1.off()
+    motor_in2.on()
+    sleep(duration)  # Allow the motor to run for the specified duration
+    stop()
+
+def stop():
+    motor_in1.off()
+    motor_in2.off()
+    turn_motor.off()
+    right_motor.off()
+    left_motor.off()
+
+def turn_right():
+    motor_in1.off()
+    # motor_in2.on()
+    turn_motor.value = 0.5  # Adjust PWM value if needed
+    right_motor.off()
+    left_motor.on()
+
+def turn_right2(duration):
+    motor_in1.off()
+    motor_in2.on()
+    turn_motor.value = 0.5  # Adjust PWM value if needed
+    right_motor.off()
+    left_motor.on()
+    sleep(duration)  # Allow the motor to turn for the specified duration
+    stop_turn()
+    
+def small_right():
+    motor_in1.off()
+    motor_in2.on()
+    turn_motor.value = 0.3  # Adjust PWM value if needed
+    right_motor.off()
+    left_motor.on()
+    stop_turn()
+
+def turn_left():
+    motor_in1.off()
+    # motor_in2.on()
+    turn_motor.value = 0.5  # Adjust PWM value if needed
+    left_motor.off()
+    right_motor.on()
+
+def turn_left2(duration):
+    motor_in1.off()
+    motor_in2.on()
+    turn_motor.value = 0.5  # Adjust PWM value if needed
+    left_motor.off()
+    right_motor.on()
+    sleep(duration)  # Allow the motor to turn for the specified duration
+    stop_turn()
+    
+def small_left():
+    motor_in1.off()
+    motor_in2.on()
+    turn_motor.value = 0.3  # Adjust PWM value if needed
+    left_motor.off()
+    right_motor.on()
+    stop_turn()
+
+def stop_turn():
+    turn_motor.off()
+    left_motor.off()
+    right_motor.off()
+
+def turn_90_degrees(direction='right'):
+    if direction == 'right':
+        turn_right2(1.3)  # Adjust duration for 90-degree turn
+    elif direction == 'left':
+        turn_left2(1.3)  # Adjust duration for 90-degree turn
+    sleep(0.1)
+    global initial_yaw
+    # initial_yaw = None  # Reset the initial yaw
+
+def track_0():
+    trackingAngle = 0
+    if relative_yaw >= 0 + distanceAngle and relative_yaw <= 180 :
+        print("Turn Right")
+        turn_right()
+    if relative_yaw <= 360  and relative_yaw > 180:
+        print("Turn Left")
+        turn_left()
+    if relative_yaw <= 0 + distanceAngle or relative_yaw >= 360 - distanceAngle:
+        stop_turn()
+
+def track_90():
+    trackingAngle = 90
+    if relative_yaw >= 270  or relative_yaw < 90 - distanceAngle:
+            print("Turn Left")
+            turn_left()
+    if relative_yaw > 90 + distanceAngle and relative_yaw < 270 :
+            print("Turn Right")
+            turn_right()
+    if relative_yaw <= 90 + distanceAngle and relative_yaw >= 90 - distanceAngle:
+            stop_turn()
+
+def track_180():
+    trackingAngle = 180
+    if relative_yaw >= 0  and relative_yaw <= (180 - distanceAngle):
+            print("Turn Left")
+            turn_left()
+    if relative_yaw >= 180 + distanceAngle and relative_yaw < 360:
+            print("Turn Right")
+            turn_right()
+    if relative_yaw <= 180 + distanceAngle and relative_yaw >= 180 - distanceAngle:
+            stop_turn()    
+
+def track_270():
+    trackingAngle = 270
+    if relative_yaw <= 90  or relative_yaw >= 270 - distanceAngle:  
+        print("Turn Left")
+        turn_left()
+    if relative_yaw <= 270 + distanceAngle and relative_yaw > 90:
+        print("Turn Right")
+        turn_right()
+    if relative_yaw <= 270 + distanceAngle and relative_yaw >= 270 - distanceAngle:
+        stop_turn()  
+
+# Camera setup
+picam2 = Picamera2()
+config = picam2.create_preview_configuration(main={"size": (310, 160)})
+config["transform"] = libcamera.Transform(hflip=1, vflip=1)
+picam2.configure(config)
+picam2.set_controls({"AfMode": 2})
+picam2.start(show_preview=False)
+picam2.awb_mode = 'on'
+picam2.framerate = 36
+
+HSV_value_color_G = [
+    ((30, 130, 0), (70, 230, 255), 'G')  #HSV range for green  
+    
+]
+HSV_value_color_R = [
+    ((120, 170, 0), (180, 255, 255), 'R')  # HSV range for red
+]
+
+while True:
+    motor_in1.off()
+    motor_in2.on()
+    # Read distance from sensors
+    front = sensor1.distance * 100  # Convert to cm
+    left = sensor2.distance * 100   # Convert to cm
+    right = sensor3.distance * 100  # Convert to cm
+
+    print(f"Front Sensor Distance: {front:.2f} cm")
+    print(f"Left Sensor Distance: {left:.2f} cm")
+    print(f"Right Sensor Distance: {right:.2f} cm")
+    #print("--------------------------------------")
+
+    # Read Euler angles from BNO055
+    euler = sensor.euler
+    if euler is not None:
+        yaw, roll, pitch = euler
+        if initial_yaw is None:
+            initial_yaw = yaw
+        relative_yaw = yaw - initial_yaw
+        if relative_yaw < 0:
+            print(relative_yaw)
+            relative_yaw = relative_yaw*-1
+        print("Yaw: {:.2f} degrees".format(relative_yaw))
+
+    frame = picam2.capture_array("main")
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+    # topimg = hsv[0:80,0:309]
+    Limg = hsv[80:157,0:200]
+    Rimg = hsv[80:157,100:309]
+    
+    red_detected = False
+    for (lower, upper, color_name) in HSV_value_color_G:
+        maskG = cv2.inRange(Limg, np.array(lower), np.array(upper))
+        contoursG, _ = cv2.findContours(maskG, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if len(contoursG) > 0:
+            for contour in contoursG:
+                area = cv2.contourArea(contour)
+                x, y, w, h = cv2.boundingRect(contour)
+                if area > minArea:
+                    turnLeft = 1
+                    cv2.rectangle(Limg, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    cv2.putText(Limg, color_name, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+        else:
+            turnLeft = 0
+    for (lower, upper, color_name) in HSV_value_color_R:
+        maskR = cv2.inRange(Rimg, np.array(lower), np.array(upper))
+        contoursR, _ = cv2.findContours(maskR, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if len(contoursR) > 0:
+            for contour in contoursR:
+                area = cv2.contourArea(contour)
+                x, y, w, h = cv2.boundingRect(contour)
+                if area > minArea:
+                    turnRight = 1
+                    cv2.rectangle(Rimg, (x, y), (x + w, y + h), (0, 0, 255), 2)
+                    cv2.putText(Rimg, color_name, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+        else:
+            turnRight = 0
+    # Convert the frame from BGR to RGB for correct color display
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    cv2.rectangle(frame_rgb,(0,80),(200,157),(0,255,0),2) #red
+    cv2.rectangle(frame_rgb,(100,80),(309,157),(0,0,255),2) #Green
+
+    if turnLeft == 0 and turnRight == 0 :
+        if front <= 55:
+                print("corner=",corner)
+                stop()
+                if direction == 0:
+                    if left > right:
+                      direction = 1
+                      turn_90_degrees('right')
+                      corner += 1
+                    elif left < right:
+                      turn_90_degrees('left')
+                      direction = 2
+                      corner += 1
+                elif direction == 1:
+                    move_backward(0.5)
+                    turn_90_degrees('right')
+                    corner += 1
+                elif direction == 2:
+                    move_backward(0.5)
+                    turn_90_degrees('left')
+                    corner += 1
+        if direction == 1:
+             if corner == 4 or corner == 8:
+                  track_0()
+             if corner == 1 or corner == 5 or corner == 9:
+                motor_in1.off()
+                motor_in2.on()
+             if corner == 2 or corner == 6 or corner == 10:
+                  track_180()
+             if corner == 3 or corner == 7 or corner == 11:
+                  track_90()
+                       
+        if direction == 2:
+             if corner == 0 or corner == 4 or corner == 8:
+                  track_0()
+             if corner == 1 or corner == 5 or corner == 9:
+                  track_90()
+             if corner == 2 or corner == 6 or corner == 10:
+                  track_180()
+             if corner == 3 or corner == 7 or corner == 11:
+                motor_in1.off()
+                motor_in2.on()
+    elif turnLeft == 1 and turnRight == 0:
+        print("Turn Left")
+    elif turnLeft == 0 and turnRight == 1:
+        print("Turn Right")
+    
+    cv2.imshow("ALL Image", frame_rgb)
+    cv2.imshow("L", Limg)
+    cv2.imshow("R", Rimg)
+
+    if corner == 12:
+        move_forward(2.5)
+        break
+  
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
+        break
+    sleep(0.1)
+# Clean up
+motor_pwm.value = 0
+cv2.destroyAllWindows()
+# GPIO.cleanup()

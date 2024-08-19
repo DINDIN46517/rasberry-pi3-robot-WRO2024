@@ -1,0 +1,253 @@
+import time
+import board
+import busio
+import adafruit_bno055
+from gpiozero import PWMOutputDevice, OutputDevice, DistanceSensor
+from time import sleep
+
+# Initialize I2C connection
+i2c = busio.I2C(board.SCL, board.SDA)
+
+# Create BNO055 object
+sensor = adafruit_bno055.BNO055_I2C(i2c)
+
+# Initialize the initial yaw
+initial_yaw = None
+
+# Pin definitions
+in1 = 19
+in2 = 16
+en = 13
+en2 = 20
+in3 = 21
+in4 = 26
+
+sensor1 = DistanceSensor(echo=22, trigger=27)  # Front sensor
+sensor2 = DistanceSensor(echo=25, trigger=9)   # Left sensor
+sensor3 = DistanceSensor(echo=18, trigger=23)   # Right sensor
+
+controldirection = 0
+direction = 0
+corner = 0
+distanceAngle = 5
+trackingAngle = 0
+
+# Motor setup
+motor_pwm = PWMOutputDevice(en, frequency=1000, initial_value=0.5)
+
+# GPIO setup
+motor_in1 = OutputDevice(in1)
+motor_in2 = OutputDevice(in2)
+turn_motor = OutputDevice(en2)
+right_motor = OutputDevice(in4)
+left_motor = OutputDevice(in3)
+
+
+def move_backward(duration):
+    motor_in1.on()
+    motor_in2.off()
+    sleep(duration)  # Allow the motor to run for the specified duration
+    stop()
+
+def move_forward(duration):
+    motor_in1.off()
+    motor_in2.on()
+    sleep(duration)  # Allow the motor to run for the specified duration
+    stop()
+
+def stop():
+    motor_in1.off()
+    motor_in2.off()
+    turn_motor.off()
+    right_motor.off()
+    left_motor.off()
+
+def turn_right():
+    motor_in1.off()
+    # motor_in2.on()
+    turn_motor.value = 0.5  # Adjust PWM value if needed
+    right_motor.off()
+    left_motor.on()
+
+def turn_right2(duration):
+    motor_in1.off()
+    motor_in2.on()
+    turn_motor.value = 0.5  # Adjust PWM value if needed
+    right_motor.off()
+    left_motor.on()
+    sleep(duration)  # Allow the motor to turn for the specified duration
+    stop_turn()
+    
+def small_right():
+    motor_in1.off()
+    motor_in2.on()
+    turn_motor.value = 0.3  # Adjust PWM value if needed
+    right_motor.off()
+    left_motor.on()
+    stop_turn()
+
+def turn_left():
+    motor_in1.off()
+    # motor_in2.on()
+    turn_motor.value = 0.5  # Adjust PWM value if needed
+    left_motor.off()
+    right_motor.on()
+
+
+def turn_left2(duration):
+    motor_in1.off()
+    motor_in2.on()
+    turn_motor.value = 0.5  # Adjust PWM value if needed
+    left_motor.off()
+    right_motor.on()
+    sleep(duration)  # Allow the motor to turn for the specified duration
+    stop_turn()
+    
+def small_left():
+    motor_in1.off()
+    motor_in2.on()
+    turn_motor.value = 0.3  # Adjust PWM value if needed
+    left_motor.off()
+    right_motor.on()
+    stop_turn()
+
+def stop_turn():
+    turn_motor.off()
+    left_motor.off()
+    right_motor.off()
+
+def turn_90_degrees(direction='right'):
+    if direction == 'right':
+        turn_right2(1.3)  # Adjust duration for 90-degree turn
+    elif direction == 'left':
+        turn_left2(1.3)  # Adjust duration for 90-degree turn
+    sleep(0.1)
+    global initial_yaw
+    # initial_yaw = None  # Reset the initial yaw
+
+def track_0():
+    trackingAngle = 0
+    if relative_yaw >= 0 + distanceAngle and relative_yaw <= 180 :
+        print("Turn Right")
+        turn_right()
+    if relative_yaw <= 360  and relative_yaw > 180:
+        print("Turn Left")
+        turn_left()
+    if relative_yaw <= 0 + distanceAngle or relative_yaw >= 360 - distanceAngle:
+        stop_turn()
+
+def track_90():
+    trackingAngle = 90
+    if relative_yaw >= 270  or relative_yaw < 90 - distanceAngle:
+            print("Turn Left")
+            turn_left()
+    if relative_yaw > 90 + distanceAngle and relative_yaw < 270 :
+            print("Turn Right")
+            turn_right()
+    if relative_yaw <= 90 + distanceAngle and relative_yaw >= 90 - distanceAngle:
+            stop_turn()
+
+def track_180():
+    trackingAngle = 180
+    if relative_yaw >= 0  and relative_yaw <= (180 - distanceAngle):
+            print("Turn Left")
+            turn_left()
+    if relative_yaw >= 180 + distanceAngle and relative_yaw < 360:
+            print("Turn Right")
+            turn_right()
+    if relative_yaw <= 180 + distanceAngle and relative_yaw >= 180 - distanceAngle:
+            stop_turn()    
+
+def track_270():
+    trackingAngle = 270
+    if relative_yaw <= 90  or relative_yaw >= 270 - distanceAngle:  
+        print("Turn Left")
+        turn_left()
+    if relative_yaw <= 270 + distanceAngle and relative_yaw > 90:
+        print("Turn Right")
+        turn_right()
+    if relative_yaw <= 270 + distanceAngle and relative_yaw >= 270 - distanceAngle:
+        stop_turn()  
+     
+
+move_forward(1.8)
+try:
+    while True:
+        motor_in1.off()
+        motor_in2.on()
+        # Read distance from sensors
+        front = sensor1.distance * 100  # Convert to cm
+        left = sensor2.distance * 100   # Convert to cm
+        right = sensor3.distance * 100  # Convert to cm
+
+        print(f"Front Sensor Distance: {front:.2f} cm")
+        print(f"Left Sensor Distance: {left:.2f} cm")
+        print(f"Right Sensor Distance: {right:.2f} cm")
+        #print("--------------------------------------")
+
+        # Read Euler angles from BNO055
+        euler = sensor.euler
+        if euler is not None:
+            yaw, roll, pitch = euler
+            if initial_yaw is None:
+                initial_yaw = yaw
+            relative_yaw = yaw - initial_yaw
+            if relative_yaw < 0:
+                print(relative_yaw)
+                relative_yaw = relative_yaw*-1
+            print("Yaw: {:.2f} degrees".format(relative_yaw))
+        if front <= 55:
+                print("corner=",corner)
+                stop()
+                if direction == 0:
+                    if left > right:
+                      direction = 1
+                      turn_90_degrees('right')
+                      corner += 1
+                    elif left < right:
+                      turn_90_degrees('left')
+                      direction = 2
+                      corner += 1
+                elif direction == 1:
+                    move_backward(0.5)
+                    turn_90_degrees('right')
+                    corner += 1
+                elif direction == 2:
+                    move_backward(0.5)
+                    turn_90_degrees('left')
+                    corner += 1
+
+        if direction == 1:
+             if corner == 4 or corner == 8:
+                  track_0()
+             if corner == 1 or corner == 5 or corner == 9:
+                motor_in1.off()
+                motor_in2.on()
+             if corner == 2 or corner == 6 or corner == 10:
+                  track_180()
+             if corner == 3 or corner == 7 or corner == 11:
+                  track_90()
+                       
+        if direction == 2:
+             if corner == 0 or corner == 4 or corner == 8:
+                  track_0()
+             if corner == 1 or corner == 5 or corner == 9:
+                  track_90()
+             if corner == 2 or corner == 6 or corner == 10:
+                  track_180()
+             if corner == 3 or corner == 7 or corner == 11:
+                motor_in1.off()
+                motor_in2.on()
+                    
+        else:
+            print("Sensor reading error. Please check the connection.")
+        if corner == 12:
+            move_forward(2.5)
+            break
+    sleep(0.1)
+    
+except KeyboardInterrupt:
+    pass
+
+# Cleanup
+motor_pwm.value = 0

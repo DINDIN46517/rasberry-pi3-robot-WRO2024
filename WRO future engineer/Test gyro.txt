@@ -1,0 +1,35 @@
+import time
+import board
+import busio
+import adafruit_bno055
+
+# Initialize I2C connection
+i2c = busio.I2C(board.SCL, board.SDA)
+
+# Create BNO055 object
+sensor = adafruit_bno055.BNO055_I2C(i2c)
+
+# Initialize the initial yaw
+initial_yaw = None
+
+while True:
+    # Get the Euler angles (yaw, roll, pitch) from the sensor
+    euler = sensor.euler
+
+    if euler is not None:
+        yaw, roll, pitch = euler
+
+        # Initialize the initial yaw if it's not set
+        if initial_yaw is None:
+            initial_yaw = yaw
+
+        # Calculate relative yaw
+        relative_yaw = yaw - initial_yaw
+
+        # Print only the yaw angle
+        print("Yaw: {:.2f} degrees".format(relative_yaw))
+    else:
+        print("Sensor reading error. Please check the connection.")
+
+    # Wait for a second before the next reading
+    time.sleep(0.1)
